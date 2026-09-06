@@ -9,6 +9,7 @@ from fastapi import Depends, Request
 
 from src.events.bus import DigitalTwinEventBus
 from src.ingestion.pipeline import IngestionPipeline
+from src.services.benchmark_service import BenchmarkService
 from src.services.pack_service import PackManagementService
 from src.services.replay_service import ReplayService
 from src.services.telemetry_service import TelemetryIngestService
@@ -28,6 +29,7 @@ class ServiceContainer:
     twin_service: TwinApplicationService
     telemetry_service: TelemetryIngestService
     replay_service: ReplayService
+    benchmark_service: BenchmarkService
     event_bus: DigitalTwinEventBus
     telemetry_repo: TelemetryRepository
     state_repo: StateHistoryRepository
@@ -62,12 +64,17 @@ def create_default_services(
         twin_service=twin_svc,
         telemetry_repo=t_repo,
     )
+    benchmark_svc = BenchmarkService(
+        twin_service=twin_svc,
+        event_bus=e_bus,
+    )
 
     return ServiceContainer(
         pack_service=pack_svc,
         twin_service=twin_svc,
         telemetry_service=telemetry_svc,
         replay_service=replay_svc,
+        benchmark_service=benchmark_svc,
         event_bus=e_bus,
         telemetry_repo=t_repo,
         state_repo=s_repo,
@@ -110,3 +117,11 @@ def get_replay_service(
 ) -> ReplayService:
     """Provides the active ReplayService."""
     return container.replay_service
+
+
+def get_benchmark_service(
+    container: ServiceContainer = Depends(get_service_container),
+) -> BenchmarkService:
+    """Provides the active BenchmarkService."""
+    return container.benchmark_service
+

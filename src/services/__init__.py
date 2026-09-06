@@ -4,6 +4,11 @@ Provides transport-agnostic application services coordinating battery pack manag
 digital twin instance lifecycles, telemetry ingestion, and drive-cycle replays.
 """
 
+from src.services.benchmark_service import (
+    BenchmarkService,
+    BenchmarkServiceConfig,
+    DatasetNotFoundError,
+)
 from src.services.exceptions import (
     DuplicateEntityError,
     EntityNotFoundError,
@@ -23,11 +28,15 @@ __all__ = [
     "TwinApplicationService",
     "TelemetryIngestService",
     "ReplayService",
+    "BenchmarkService",
+    "BenchmarkServiceConfig",
     # Exceptions
     "ServiceError",
     "EntityNotFoundError",
     "PackNotFoundError",
     "TwinNotFoundError",
+    "DatasetNotFoundError",
     "DuplicateEntityError",
     "InvalidServiceOperationError",
 ]
+

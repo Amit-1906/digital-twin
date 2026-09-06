@@ -1,5 +1,14 @@
-"""Pydantic Transport Data Transfer Objects (DTOs)."""
-
+from src.api.schemas.benchmarking import (
+    BenchmarkDatasetSummaryDTO,
+    BenchmarkResetResponseDTO,
+    BenchmarkResultResponseDTO,
+    BenchmarkRunRequestDTO,
+    DetectionLatencySummaryDTO,
+    DiagnosticEvaluationReportDTO,
+    EventDiagnosticEvaluationDTO,
+    SampleConfusionMatrixDTO,
+    SignalMetricSummaryDTO,
+)
 from src.api.schemas.pack import (
     BalancingConfigDTO,
     BatteryPackResponseDTO,
@@ -64,4 +73,15 @@ __all__ = [
     "ReplayCSVRequestDTO",
     "SignalMetricsDTO",
     "ReplayResponseDTO",
+    # Benchmarking DTOs
+    "BenchmarkRunRequestDTO",
+    "BenchmarkDatasetSummaryDTO",
+    "SignalMetricSummaryDTO",
+    "SampleConfusionMatrixDTO",
+    "DetectionLatencySummaryDTO",
+    "EventDiagnosticEvaluationDTO",
+    "DiagnosticEvaluationReportDTO",
+    "BenchmarkResultResponseDTO",
+    "BenchmarkResetResponseDTO",
 ]
+

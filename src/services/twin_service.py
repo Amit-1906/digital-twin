@@ -4,6 +4,7 @@ Coordinates instantiation, stepping, history querying, and lifecycle operations
 for DigitalTwinInstance objects without transport or HTTP dependencies.
 """
 
+import collections
 import threading
 from typing import Any, Mapping, Optional, Sequence, Union
 
@@ -43,6 +44,7 @@ class TwinApplicationService:
         self._state_repo = state_repo
         self._pipeline = ingestion_pipeline
         self._twins: dict[str, DigitalTwinInstance] = {}
+        self._diagnostic_history: dict[str, collections.deque[Any]] = {}
         self._lock = threading.RLock()
 
     @property
@@ -74,6 +76,7 @@ class TwinApplicationService:
         health_estimator: Optional[Any] = None,
         parameter_identifier: Optional[Any] = None,
         validation_engine: Optional[Any] = None,
+        diagnostic_engine: Optional[Any] = None,
         config: Optional[RuntimeConfig] = None,
         overwrite: bool = False,
     ) -> DigitalTwinInstance:
@@ -87,6 +90,7 @@ class TwinApplicationService:
             health_estimator: Optional StateOfHealthEstimator.
             parameter_identifier: Optional Online Parameter Identifier engine.
             validation_engine: Optional Behavioral Validation & Residual Analysis engine.
+            diagnostic_engine: Optional Explainable Diagnostic engine.
             config: Optional RuntimeConfig.
             overwrite: If True, replaces existing twin with same system_id.
 
@@ -112,6 +116,7 @@ class TwinApplicationService:
                 health_estimator=health_estimator,
                 parameter_identifier=parameter_identifier,
                 validation_engine=validation_engine,
+                diagnostic_engine=diagnostic_engine,
                 event_bus=self._event_bus,
                 telemetry_repo=self._telemetry_repo,
                 state_repo=self._state_repo,
@@ -215,7 +220,13 @@ class TwinApplicationService:
             TwinSyncOutput containing model outputs, estimator state, and physical residuals.
         """
         twin = self.get_twin(system_id)
-        return twin.step(snapshot)
+        out = twin.step(snapshot)
+        if twin.latest_diagnostic_report is not None:
+            with self._lock:
+                if system_id not in self._diagnostic_history:
+                    self._diagnostic_history[system_id] = collections.deque(maxlen=100)
+                self._diagnostic_history[system_id].append(twin.latest_diagnostic_report)
+        return out
 
     def step_raw_twin(
         self,
@@ -236,12 +247,18 @@ class TwinApplicationService:
             TwinSyncOutput.
         """
         twin = self.get_twin(system_id)
-        return twin.step_raw(
+        out = twin.step_raw(
             raw_data=raw_payload,
             format_identifier=format_identifier,
             source_id=system_id,
             headers=headers,
         )
+        if twin.latest_diagnostic_report is not None:
+            with self._lock:
+                if system_id not in self._diagnostic_history:
+                    self._diagnostic_history[system_id] = collections.deque(maxlen=100)
+                self._diagnostic_history[system_id].append(twin.latest_diagnostic_report)
+        return out
 
     def get_latest_state(self, system_id: str) -> Optional[TwinStateRecord]:
         """Retrieves the latest state record for a given battery system.
@@ -343,6 +360,81 @@ class TwinApplicationService:
             return report.parameter_evidence
         return None
 
+    def get_twin_diagnostics(self, system_id: str) -> Optional[Any]:
+        """Retrieves the latest DiagnosticAssessmentReport for an active digital twin.
+
+        Args:
+            system_id: Target battery system identifier.
+
+        Returns:
+            Latest DiagnosticAssessmentReport, or None if unstepped/unconfigured.
+
+        Raises:
+            TwinNotFoundError: If the twin instance does not exist.
+        """
+        twin = self.get_twin(system_id)
+        return twin.latest_diagnostic_report
+
+    def get_twin_diagnostic_history(self, system_id: str) -> list[Any]:
+        """Retrieves historical diagnostic assessment reports bounded to 100 entries.
+
+        Args:
+            system_id: Target battery system identifier.
+
+        Returns:
+            List of historical DiagnosticAssessmentReport instances.
+
+        Raises:
+            TwinNotFoundError: If the twin instance does not exist.
+        """
+        self.get_twin(system_id)
+        with self._lock:
+            history = self._diagnostic_history.get(system_id)
+            return list(history) if history else []
+
+    def get_twin_hypotheses(self, system_id: str) -> list[dict[str, Any]]:
+        """Retrieves evaluated or standard hypothesis catalog for a digital twin.
+
+        Args:
+            system_id: Target battery system identifier.
+
+        Returns:
+            List of hypothesis dictionaries.
+
+        Raises:
+            TwinNotFoundError: If the twin instance does not exist.
+        """
+        twin = self.get_twin(system_id)
+        if twin.latest_diagnostic_report is not None:
+            res: list[dict[str, Any]] = []
+            if twin.latest_diagnostic_report.primary_hypothesis:
+                res.append(twin.latest_diagnostic_report.primary_hypothesis.to_dict())
+            for alt in twin.latest_diagnostic_report.alternative_hypotheses:
+                res.append(alt.to_dict())
+            return res
+        elif twin.diagnostic_engine is not None:
+            from src.diagnostics.types import OperatingContext
+            return [
+                h.evaluate([], context=OperatingContext.REST).to_dict()
+                for h in getattr(twin.diagnostic_engine, "_hypotheses", ())
+            ]
+        return []
+
+    def reset_twin_diagnostics(self, system_id: str) -> None:
+        """Resets only the diagnostic engine and history of a twin without mutating other subsystems.
+
+        Args:
+            system_id: Target battery system identifier.
+
+        Raises:
+            TwinNotFoundError: If the twin instance does not exist.
+        """
+        twin = self.get_twin(system_id)
+        with self._lock:
+            twin.reset_diagnostics()
+            if system_id in self._diagnostic_history:
+                self._diagnostic_history[system_id].clear()
+
     def get_state_history(
         self,
         system_id: str,
@@ -424,6 +516,7 @@ class TwinApplicationService:
         with self._lock:
             if system_id in self._twins:
                 del self._twins[system_id]
+                self._diagnostic_history.pop(system_id, None)
                 return True
             return False
 
@@ -447,3 +540,5 @@ class TwinApplicationService:
         """Clears all active twin instances."""
         with self._lock:
             self._twins.clear()
+            self._diagnostic_history.clear()
+

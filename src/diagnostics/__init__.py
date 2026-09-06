@@ -3,6 +3,10 @@
 from src.diagnostics.config import DiagnosticThresholdConfig
 from src.diagnostics.context import OperatingContextClassifier
 from src.diagnostics.engine import DiagnosticEngine
+from src.diagnostics.events import (
+    BatteryDiagnosticAssessedEvent,
+    CriticalAdvisoryAlertEvent,
+)
 from src.diagnostics.evidence import (
     EvidenceScoreResult,
     EvidenceScoringEngine,
@@ -71,4 +75,8 @@ __all__ = [
     "LifecycleTransition",
     "DiagnosticExplanationBuilder",
     "DiagnosticEngine",
+    # Domain Events (Phase 4)
+    "BatteryDiagnosticAssessedEvent",
+    "CriticalAdvisoryAlertEvent",
 ]
+

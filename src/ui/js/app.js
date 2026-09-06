@@ -5,6 +5,8 @@
 
 import { api } from './api.js';
 import { store } from './state.js';
+import { BenchmarkingView } from './views/benchmarking.js';
+import { DiagnosticsView } from './views/diagnostics.js';
 import { EstimationView } from './views/estimation.js';
 import { EventsView } from './views/events.js';
 import { OverviewView } from './views/overview.js';
@@ -50,6 +52,8 @@ class TwinVoltApp {
       estimation: document.getElementById('view-estimation'),
       replay: document.getElementById('view-replay'),
       events: document.getElementById('view-events'),
+      diagnostics: document.getElementById('view-diagnostics'),
+      benchmarking: document.getElementById('view-benchmarking'),
     };
 
     if (viewContainers.overview) this.views.overview = new OverviewView(viewContainers.overview);
@@ -58,6 +62,8 @@ class TwinVoltApp {
     if (viewContainers.estimation) this.views.estimation = new EstimationView(viewContainers.estimation);
     if (viewContainers.replay) this.views.replay = new ReplayView(viewContainers.replay);
     if (viewContainers.events) this.views.events = new EventsView(viewContainers.events);
+    if (viewContainers.diagnostics) this.views.diagnostics = new DiagnosticsView(viewContainers.diagnostics);
+    if (viewContainers.benchmarking) this.views.benchmarking = new BenchmarkingView(viewContainers.benchmarking);
   }
 
   _setupNavigation() {

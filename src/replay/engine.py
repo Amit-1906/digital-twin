@@ -64,6 +64,7 @@ class ReplayResult:
     end_timestamp_ns: int
     sync_outputs: tuple[TwinSyncOutput, ...] = field(default_factory=tuple)
     state_records: tuple[TwinStateRecord, ...] = field(default_factory=tuple)
+    diagnostic_reports: tuple[Any, ...] = field(default_factory=tuple)
     anomalies_detected: int = 0
     metrics_report: Optional[TrackingMetricsReport] = None
     is_passing: bool = True
@@ -79,6 +80,7 @@ class ReplayResult:
             "duration_seconds": self.duration_seconds,
             "start_timestamp_ns": self.start_timestamp_ns,
             "end_timestamp_ns": self.end_timestamp_ns,
+            "diagnostic_reports_count": len(self.diagnostic_reports),
             "anomalies_detected": self.anomalies_detected,
             "is_passing": self.is_passing,
             "metrics_report": self.metrics_report.to_dict() if self.metrics_report else None,
@@ -146,6 +148,7 @@ class DriveCycleReplayEngine:
 
         sync_outputs: list[TwinSyncOutput] = []
         state_records: list[TwinStateRecord] = []
+        diagnostic_reports: list[Any] = []
         total_samples = len(snapshots)
         executed_steps = 0
         skipped_samples = 0
@@ -161,6 +164,8 @@ class DriveCycleReplayEngine:
                 sync_outputs.append(sync_out)
                 if instance.latest_state_record is not None:
                     state_records.append(instance.latest_state_record)
+                if instance.latest_diagnostic_report is not None:
+                    diagnostic_reports.append(instance.latest_diagnostic_report)
 
                 executed_steps += 1
 
@@ -209,6 +214,7 @@ class DriveCycleReplayEngine:
             end_timestamp_ns=end_ts_ns,
             sync_outputs=tuple(sync_outputs),
             state_records=tuple(state_records),
+            diagnostic_reports=tuple(diagnostic_reports),
             anomalies_detected=instance.total_anomalies,
             metrics_report=metrics_report,
             is_passing=is_passing,

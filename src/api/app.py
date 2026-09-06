@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from src.api.dependencies import ServiceContainer, create_default_services
 from src.api.exceptions import register_exception_handlers
 from src.api.lifespan import create_lifespan
+from src.api.routes.benchmarks import router as benchmarks_router
 from src.api.routes.gateway import router as gateway_router
 from src.api.routes.health import router as health_router
 from src.api.routes.packs import router as packs_router
@@ -70,6 +71,7 @@ def create_app(
     app.include_router(twins_router)
     app.include_router(telemetry_router)
     app.include_router(replay_router)
+    app.include_router(benchmarks_router)
     app.include_router(websocket_router)
     app.include_router(gateway_router)
 

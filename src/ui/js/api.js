@@ -133,6 +133,38 @@ class ApiClient {
     });
   }
 
+  // Diagnostics & Intelligence (Level 5.4)
+  async getTwinDiagnostics(systemId) {
+    return this._request(`/api/v1/twins/${encodeURIComponent(systemId)}/diagnostics`);
+  }
+
+  async getTwinDiagnosticHistory(systemId) {
+    return this._request(`/api/v1/twins/${encodeURIComponent(systemId)}/diagnostics/history`);
+  }
+
+  async getTwinHypotheses(systemId) {
+    return this._request(`/api/v1/twins/${encodeURIComponent(systemId)}/diagnostics/hypotheses`);
+  }
+
+  async resetTwinDiagnostics(systemId) {
+    return this._request(`/api/v1/twins/${encodeURIComponent(systemId)}/diagnostics/reset`, {
+      method: 'POST',
+    });
+  }
+
+  // Health, Calibration & Validation (Level 5.1 - 5.3)
+  async getTwinHealth(systemId) {
+    return this._request(`/api/v1/twins/${encodeURIComponent(systemId)}/health`);
+  }
+
+  async getTwinCalibration(systemId) {
+    return this._request(`/api/v1/twins/${encodeURIComponent(systemId)}/calibration`);
+  }
+
+  async getTwinValidation(systemId) {
+    return this._request(`/api/v1/twins/${encodeURIComponent(systemId)}/validation`);
+  }
+
   // Replay
   async replayProfile(systemId, payload) {
     return this._request(`/api/v1/replay/${encodeURIComponent(systemId)}/profile`, {
@@ -151,6 +183,42 @@ class ApiClient {
   async getLatestReplay(systemId) {
     return this._request(`/api/v1/replay/${encodeURIComponent(systemId)}/latest`);
   }
+
+  // Benchmarking & Experimental Validation (Level 5.5)
+  async getBenchmarkDatasets() {
+    return this._request('/api/v1/benchmarks/datasets');
+  }
+
+  async getBenchmarkDataset(datasetId) {
+    return this._request(`/api/v1/benchmarks/datasets/${encodeURIComponent(datasetId)}`);
+  }
+
+  async runBenchmark(systemId, payload) {
+    return this._request(`/api/v1/benchmarks/${encodeURIComponent(systemId)}/run`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getLatestBenchmark(systemId) {
+    return this._request(`/api/v1/benchmarks/${encodeURIComponent(systemId)}/latest`);
+  }
+
+  async getBenchmarkHistory(systemId, limit = 50) {
+    return this._request(`/api/v1/benchmarks/${encodeURIComponent(systemId)}/history?limit=${limit}`);
+  }
+
+  async getBenchmarkResult(benchmarkId) {
+    return this._request(`/api/v1/benchmarks/results/${encodeURIComponent(benchmarkId)}`);
+  }
+
+  async resetBenchmark(systemId) {
+    return this._request(`/api/v1/benchmarks/${encodeURIComponent(systemId)}/reset`, {
+      method: 'POST',
+    });
+  }
 }
 
 export const api = new ApiClient();
+
+

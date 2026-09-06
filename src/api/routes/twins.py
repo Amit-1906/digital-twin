@@ -1,5 +1,4 @@
-"""Digital Twin Resource Routes."""
-
+import time
 from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -14,6 +13,7 @@ from src.api.schemas.twin import (
     TwinStepSnapshotDTO,
     TwinSyncOutputResponseDTO,
 )
+from src.diagnostics.engine import DiagnosticEngine
 from src.estimators.coulomb_counter import CoulombCounter
 from src.estimators.ekf import ExtendedKalmanFilter
 from src.models.ecm.generic_ecm import GenericECMModel
@@ -156,12 +156,14 @@ async def create_twin(
         )
 
     # 3. Create and Register Twin
+    diag_engine = DiagnosticEngine(system_id=payload.system_id)
     cfg = RuntimeConfig(system_id=payload.system_id, default_dt_s=payload.default_dt_s)
     twin = twin_service.create_twin(
         system_id=payload.system_id,
         battery_pack=pack,
         battery_model=model,
         state_estimator=estimator,
+        diagnostic_engine=diag_engine,
         config=cfg,
     )
 
@@ -542,3 +544,82 @@ async def get_twin_parameter_validation(
         "evaluated_sample_count": 0,
         "diagnostics": {"status": "NO_PARAMETER_EVIDENCE_AVAILABLE"},
     }
+
+
+@router.get(
+    "/{system_id}/diagnostics",
+    summary="Query Battery Explainable Diagnostic Assessment and Decision Support",
+)
+async def get_twin_diagnostics(
+    system_id: str,
+    twin_service: TwinApplicationService = Depends(get_twin_service),
+) -> dict[str, Any]:
+    """Returns active fault lifecycle state, ranked hypotheses, corroborating evidence, and actionable recommendations."""
+    twin = twin_service.get_twin(system_id)
+    report = twin_service.get_twin_diagnostics(system_id)
+
+    if report is not None:
+        return report.to_dict()
+
+    return {
+        "assessment_id": f"diag_{system_id}_0",
+        "system_id": system_id,
+        "timestamp_ns": 0,
+        "lifecycle_state": "NORMAL",
+        "severity": "NORMAL",
+        "operating_context": "REST",
+        "primary_hypothesis": None,
+        "alternative_hypotheses": [],
+        "corroborating_signals": [],
+        "explanation_narrative": "Diagnostic engine initialized; no anomalous evidence detected.",
+        "recommended_operator_actions": ["Maintain normal monitoring schedule."],
+        "diagnostics": {"status": "INITIAL_UNSTEPPED"},
+        "active_anomalies_count": 0,
+        "data_quality_status": "VALID",
+    }
+
+
+@router.get(
+    "/{system_id}/diagnostics/history",
+    summary="Query Historical Diagnostic Assessment Reports",
+)
+async def get_twin_diagnostic_history(
+    system_id: str,
+    twin_service: TwinApplicationService = Depends(get_twin_service),
+) -> list[dict[str, Any]]:
+    """Returns historical diagnostic assessment reports from the in-memory ring buffer (up to 100 entries)."""
+    twin = twin_service.get_twin(system_id)
+    history = twin_service.get_twin_diagnostic_history(system_id)
+    return [r.to_dict() for r in history]
+
+
+@router.get(
+    "/{system_id}/diagnostics/hypotheses",
+    summary="Query Root Cause Diagnostic Hypotheses Catalog",
+)
+async def get_twin_diagnostic_hypotheses(
+    system_id: str,
+    twin_service: TwinApplicationService = Depends(get_twin_service),
+) -> list[dict[str, Any]]:
+    """Returns standard or evaluated root cause hypotheses catalog with evidence strength tiers."""
+    twin = twin_service.get_twin(system_id)
+    return twin_service.get_twin_hypotheses(system_id)
+
+
+@router.post(
+    "/{system_id}/diagnostics/reset",
+    summary="Reset Diagnostic Subsystem State Only",
+)
+async def reset_twin_diagnostics(
+    system_id: str,
+    twin_service: TwinApplicationService = Depends(get_twin_service),
+) -> dict[str, Any]:
+    """Resets only the diagnostic engine state and assessment history without mutating model, estimator, or other layers."""
+    twin_service.reset_twin_diagnostics(system_id)
+    return {
+        "system_id": system_id,
+        "status": "RESET_SUCCESSFUL",
+        "subsystem": "DIAGNOSTICS",
+        "timestamp_ns": time.time_ns(),
+    }
+

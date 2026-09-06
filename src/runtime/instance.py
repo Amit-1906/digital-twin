@@ -56,6 +56,7 @@ class DigitalTwinInstance:
         health_estimator: Optional[Any] = None,
         parameter_identifier: Optional[Any] = None,
         validation_engine: Optional[Any] = None,
+        diagnostic_engine: Optional[Any] = None,
         event_bus: Optional[AbstractEventBus] = None,
         telemetry_repo: Optional[TelemetryRepository] = None,
         state_repo: Optional[StateHistoryRepository] = None,
@@ -85,6 +86,7 @@ class DigitalTwinInstance:
         self._health_estimator = health_estimator
         self._parameter_identifier = parameter_identifier
         self._validation_engine = validation_engine
+        self._diagnostic_engine = diagnostic_engine
         self._event_bus = event_bus
         self._telemetry_repo = telemetry_repo
         self._state_repo = state_repo
@@ -106,9 +108,12 @@ class DigitalTwinInstance:
         self._latest_health_state: Optional[Any] = None
         self._latest_identified_parameters: Optional[Any] = None
         self._latest_validation_report: Optional[Any] = None
+        self._latest_diagnostic_report: Optional[Any] = None
         self._last_published_r0: Optional[float] = None
         self._last_published_gating_status: Optional[str] = None
         self._last_published_validation_state: Optional[Any] = None
+        self._last_published_lifecycle_state: Optional[Any] = None
+        self._last_published_critical_status: bool = False
         self._total_steps = 0
         self._total_anomalies = 0
 
@@ -216,6 +221,16 @@ class DigitalTwinInstance:
         return self._latest_validation_report
 
     @property
+    def diagnostic_engine(self) -> Optional[Any]:
+        """Active Explainable Diagnostic Engine, if attached."""
+        return self._diagnostic_engine
+
+    @property
+    def latest_diagnostic_report(self) -> Optional[Any]:
+        """Most recent DiagnosticAssessmentReport."""
+        return self._latest_diagnostic_report
+
+    @property
     def latest_sync_output(self) -> Optional[TwinSyncOutput]:
         """The most recent synchronization output vector."""
         return self._latest_sync_output
@@ -277,12 +292,17 @@ class DigitalTwinInstance:
                 self._parameter_identifier.reset()
             if self._validation_engine is not None and hasattr(self._validation_engine, "reset"):
                 self._validation_engine.reset()
+            if self._diagnostic_engine is not None and hasattr(self._diagnostic_engine, "reset"):
+                self._diagnostic_engine.reset()
             self._latest_health_state = None
             self._latest_identified_parameters = None
             self._latest_validation_report = None
+            self._latest_diagnostic_report = None
             self._last_published_r0 = None
             self._last_published_gating_status = None
             self._last_published_validation_state = None
+            self._last_published_lifecycle_state = None
+            self._last_published_critical_status = False
             self._is_initialized = True
             return self
         except Exception as exc:
@@ -305,17 +325,30 @@ class DigitalTwinInstance:
             self._parameter_identifier.reset()
         if self._validation_engine is not None and hasattr(self._validation_engine, "reset"):
             self._validation_engine.reset()
+        if self._diagnostic_engine is not None and hasattr(self._diagnostic_engine, "reset"):
+            self._diagnostic_engine.reset()
         self._latest_health_state = None
         self._latest_identified_parameters = None
         self._latest_validation_report = None
+        self._latest_diagnostic_report = None
         self._last_published_r0 = None
         self._last_published_gating_status = None
         self._last_published_validation_state = None
+        self._last_published_lifecycle_state = None
+        self._last_published_critical_status = False
         self._latest_sync_output = None
         self._latest_state_record = None
         self._total_steps = 0
         self._total_anomalies = 0
         self._is_initialized = False
+
+    def reset_diagnostics(self) -> None:
+        """Resets only the diagnostic engine without mutating estimator, model, SOH, calibration, or validation."""
+        if self._diagnostic_engine is not None and hasattr(self._diagnostic_engine, "reset"):
+            self._diagnostic_engine.reset()
+        self._latest_diagnostic_report = None
+        self._last_published_lifecycle_state = None
+        self._last_published_critical_status = False
 
     # --------------------------------------------------------------------------
     # Stepping & Orchestration
@@ -557,13 +590,309 @@ class DigitalTwinInstance:
             except Exception:
                 pass
 
-        # 11. Update Internal Tracking
+        # 11. Explainable Diagnostics & Decision Support (Level 5.4)
+        if self._diagnostic_engine is not None:
+            try:
+                evidence_items = self._collect_diagnostic_evidence(
+                    snapshot=snapshot,
+                    sync_output=sync_output,
+                    anomaly_report=anomaly_report,
+                )
+                diag_report = self._diagnostic_engine.step(
+                    telemetry=snapshot,
+                    evidence_items=evidence_items,
+                    model_validation_report=self._latest_validation_report,
+                    dt_s=sync_output.dt_s,
+                )
+                self._latest_diagnostic_report = diag_report
+
+                # Throttled event publishing semantics:
+                # A. Lifecycle transition -> publish BatteryDiagnosticAssessedEvent immediately
+                # B. Entering DIAGNOSED_CRITICAL -> publish CriticalAdvisoryAlertEvent immediately
+                # C. Remaining continuously in DIAGNOSED_CRITICAL -> MUST NOT emit CriticalAdvisoryAlertEvent every step
+                # D. Steady-state diagnostics -> publish BatteryDiagnosticAssessedEvent only on 100-step heartbeat
+                # E. Re-entering DIAGNOSED_CRITICAL after leaving it -> emit new CriticalAdvisoryAlertEvent
+                curr_lifecycle_state = diag_report.lifecycle_state
+                curr_state_val = (
+                    curr_lifecycle_state.value
+                    if hasattr(curr_lifecycle_state, "value")
+                    else str(curr_lifecycle_state)
+                )
+                is_critical = (curr_state_val == "DIAGNOSED_CRITICAL")
+
+                state_changed = (
+                    self._last_published_lifecycle_state is None
+                    or curr_lifecycle_state != self._last_published_lifecycle_state
+                )
+                entering_critical = is_critical and not self._last_published_critical_status
+                is_heartbeat = (self._total_steps % 100 == 0)
+
+                should_publish_diag = state_changed or is_heartbeat
+                should_publish_crit = entering_critical
+
+                if self._event_bus is not None and self._config.auto_publish_events:
+                    from src.diagnostics.events import (
+                        BatteryDiagnosticAssessedEvent,
+                        CriticalAdvisoryAlertEvent,
+                    )
+                    if should_publish_diag:
+                        self._event_bus.publish(
+                            BatteryDiagnosticAssessedEvent(
+                                diagnostic_report=diag_report,
+                                source_id=snapshot.system_id,
+                                timestamp_ns=snapshot.timestamp_ns,
+                            )
+                        )
+                        self._last_published_lifecycle_state = curr_lifecycle_state
+
+                    if should_publish_crit:
+                        self._event_bus.publish(
+                            CriticalAdvisoryAlertEvent(
+                                diagnostic_report=diag_report,
+                                source_id=snapshot.system_id,
+                                timestamp_ns=snapshot.timestamp_ns,
+                            )
+                        )
+
+                # Track critical status transition
+                self._last_published_critical_status = is_critical
+            except Exception:
+                pass
+
+        # 12. Update Internal Tracking
         self._latest_sync_output = sync_output
         self._latest_state_record = twin_record
         self._total_steps += 1
         self._total_anomalies += len(anomaly_report.anomalies)
 
         return sync_output
+
+    def _collect_diagnostic_evidence(
+        self,
+        snapshot: TelemetrySnapshot,
+        sync_output: TwinSyncOutput,
+        anomaly_report: Any,
+    ) -> list[Any]:
+        """Gathers available domain evidence items across telemetry, model, estimation, calibration, and validation."""
+        from src.diagnostics.types import (
+            DiagnosticEvidenceItem,
+            EvidenceEvaluationStatus,
+        )
+        from src.validation.types import SignalProvenance
+
+        items: list[DiagnosticEvidenceItem] = []
+
+        # 1. Telemetry signals
+        if snapshot.pack_voltage_v is not None:
+            v_exp = (
+                sync_output.model_output.terminal_voltage_v
+                if sync_output and sync_output.model_output
+                else snapshot.pack_voltage_v
+            )
+            items.append(
+                DiagnosticEvidenceItem(
+                    source_layer="telemetry",
+                    signal_name="pack_voltage_v",
+                    observed_value=snapshot.pack_voltage_v,
+                    expected_value=v_exp,
+                    provenance=SignalProvenance.MEASURED,
+                    status=EvidenceEvaluationStatus.SUPPORTING,
+                    weight=1.0,
+                    rationale="Pack terminal voltage",
+                )
+            )
+
+        if snapshot.pack_current_a is not None:
+            items.append(
+                DiagnosticEvidenceItem(
+                    source_layer="telemetry",
+                    signal_name="pack_current_a",
+                    observed_value=snapshot.pack_current_a,
+                    expected_value=snapshot.pack_current_a,
+                    provenance=SignalProvenance.MEASURED,
+                    status=EvidenceEvaluationStatus.SUPPORTING,
+                    weight=1.0,
+                    rationale="Pack current",
+                )
+            )
+
+        if snapshot.avg_cell_temperature_c is not None:
+            t_exp = (
+                sync_output.model_output.state.temperature_c
+                if sync_output and sync_output.model_output
+                else snapshot.avg_cell_temperature_c
+            )
+            items.append(
+                DiagnosticEvidenceItem(
+                    source_layer="telemetry",
+                    signal_name="avg_cell_temperature_c",
+                    observed_value=snapshot.avg_cell_temperature_c,
+                    expected_value=t_exp,
+                    provenance=SignalProvenance.MEASURED,
+                    status=EvidenceEvaluationStatus.SUPPORTING,
+                    weight=1.0,
+                    rationale="Average cell temperature",
+                )
+            )
+
+        if snapshot.ambient_temperature_c is not None:
+            items.append(
+                DiagnosticEvidenceItem(
+                    source_layer="telemetry",
+                    signal_name="ambient_temperature_c",
+                    observed_value=snapshot.ambient_temperature_c,
+                    expected_value=snapshot.ambient_temperature_c,
+                    provenance=SignalProvenance.MEASURED,
+                    status=EvidenceEvaluationStatus.SUPPORTING,
+                    weight=1.0,
+                    rationale="Ambient temperature",
+                )
+            )
+
+        cell_tels = getattr(snapshot, "cell_telemetries", ())
+        if cell_tels:
+            cell_volts = [c.voltage_v for c in cell_tels if getattr(c, "voltage_v", None) is not None]
+            if len(cell_volts) > 1:
+                v_spread = max(cell_volts) - min(cell_volts)
+                status = (
+                    EvidenceEvaluationStatus.SUPPORTING
+                    if v_spread > 0.05
+                    else EvidenceEvaluationStatus.NO_EVIDENCE
+                )
+                items.append(
+                    DiagnosticEvidenceItem(
+                        source_layer="telemetry",
+                        signal_name="cell_voltages_v",
+                        observed_value=cell_volts,
+                        expected_value=0.0,
+                        provenance=SignalProvenance.MEASURED,
+                        status=status,
+                        weight=1.0,
+                        rationale="Cell-to-cell voltage spread",
+                    )
+                )
+
+        # 2. Residuals
+        if sync_output.residuals:
+            v_res = sync_output.residuals.get("voltage_residual_v")
+            if v_res is not None:
+                status = (
+                    EvidenceEvaluationStatus.SUPPORTING
+                    if abs(v_res) > 0.05
+                    else EvidenceEvaluationStatus.NO_EVIDENCE
+                )
+                items.append(
+                    DiagnosticEvidenceItem(
+                        source_layer="runtime",
+                        signal_name="voltage_residual_v",
+                        observed_value=v_res,
+                        expected_value=0.0,
+                        provenance=SignalProvenance.DERIVED,
+                        status=status,
+                        weight=1.0,
+                        rationale="Terminal voltage residual",
+                    )
+                )
+
+            t_res = sync_output.residuals.get("temperature_residual_c")
+            if t_res is not None:
+                status = (
+                    EvidenceEvaluationStatus.SUPPORTING
+                    if abs(t_res) > 2.0
+                    else EvidenceEvaluationStatus.NO_EVIDENCE
+                )
+                items.append(
+                    DiagnosticEvidenceItem(
+                        source_layer="runtime",
+                        signal_name="temp_residual_c",
+                        observed_value=t_res,
+                        expected_value=0.0,
+                        provenance=SignalProvenance.DERIVED,
+                        status=status,
+                        weight=1.0,
+                        rationale="Thermal residual",
+                    )
+                )
+
+        # 3. Model validation
+        if self._latest_validation_report is not None:
+            val_st = self._latest_validation_report.active_window.state
+            items.append(
+                DiagnosticEvidenceItem(
+                    source_layer="validation",
+                    signal_name="model_validation_state",
+                    observed_value=val_st.value if hasattr(val_st, "value") else str(val_st),
+                    expected_value="VALID",
+                    provenance=SignalProvenance.DERIVED,
+                    status=(
+                        EvidenceEvaluationStatus.SUPPORTING
+                        if str(val_st) in ("VALID", "VALIDATED", "DEGRADED")
+                        else EvidenceEvaluationStatus.NO_EVIDENCE
+                    ),
+                    weight=1.0,
+                    rationale="Model behavioral validation state",
+                )
+            )
+
+        # 4. Calibration / Parameter identification
+        if self._latest_identified_parameters is not None:
+            r0_val = self._latest_identified_parameters.r0_ohm
+            nom_r0 = 0.02
+            if hasattr(self._model, "ecm_parameters"):
+                nom_r0 = self._model.ecm_parameters.series_resistance_r0_ohm
+            status = (
+                EvidenceEvaluationStatus.SUPPORTING
+                if r0_val > nom_r0 * 1.2
+                else EvidenceEvaluationStatus.NO_EVIDENCE
+            )
+            items.append(
+                DiagnosticEvidenceItem(
+                    source_layer="calibration",
+                    signal_name="identified_r0_ohm",
+                    observed_value=r0_val,
+                    expected_value=nom_r0,
+                    provenance=SignalProvenance.ESTIMATED,
+                    status=status,
+                    weight=1.0,
+                    rationale="Online identified series resistance R0",
+                )
+            )
+
+        # 5. SOH / Degradation
+        if self._latest_health_state is not None:
+            soh_cap = getattr(self._latest_health_state, "soh_capacity_fraction", 1.0)
+            status = (
+                EvidenceEvaluationStatus.SUPPORTING
+                if soh_cap < 0.8
+                else EvidenceEvaluationStatus.NO_EVIDENCE
+            )
+            items.append(
+                DiagnosticEvidenceItem(
+                    source_layer="analytics",
+                    signal_name="soh_capacity_fraction",
+                    observed_value=soh_cap,
+                    expected_value=1.0,
+                    provenance=SignalProvenance.ESTIMATED,
+                    status=status,
+                    weight=1.0,
+                    rationale="State of Health capacity fraction",
+                )
+            )
+            cyc = getattr(self._latest_health_state, "equivalent_full_cycles", 0.0)
+            items.append(
+                DiagnosticEvidenceItem(
+                    source_layer="analytics",
+                    signal_name="equivalent_full_cycles",
+                    observed_value=cyc,
+                    expected_value=0.0,
+                    provenance=SignalProvenance.DERIVED,
+                    status=EvidenceEvaluationStatus.SUPPORTING,
+                    weight=1.0,
+                    rationale="Equivalent full cycles",
+                )
+            )
+
+        return items
 
     def step_raw(
         self,
