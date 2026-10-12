@@ -26,6 +26,12 @@ def main() -> None:
         default=None,
         help="Automatically start registered edge gateway sources upon server startup",
     )
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        default=False,
+        help="Enable auto-reload on code changes",
+    )
 
     args = parser.parse_args()
 
@@ -48,6 +54,7 @@ def main() -> None:
     print(f"  UI:       http://{settings.host}:{settings.port}/ui")
     print(f"  Docs:     http://{settings.host}:{settings.port}/docs")
     print(f"  Gateway:  {'ENABLED (Autostart)' if settings.gateway_autostart else 'STANDBY'}")
+    print(f"  Reload:   {'ENABLED' if args.reload else 'DISABLED'}")
     print("  Workers:  1 (Single-process state model)")
     print("==================================================================")
 
@@ -59,6 +66,7 @@ def main() -> None:
         log_level=settings.log_level.lower(),
         factory=True,
         workers=1,
+        reload=args.reload,
     )
 
 

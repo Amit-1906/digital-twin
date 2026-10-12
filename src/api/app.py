@@ -78,6 +78,18 @@ def create_app(
     # Mount UI Static Files
     ui_dir = Path(__file__).resolve().parent.parent / "ui"
     if ui_dir.is_dir():
+        css_dir = ui_dir / "css"
+        if css_dir.is_dir():
+            app.mount("/css", StaticFiles(directory=str(css_dir)), name="css")
+
+        js_dir = ui_dir / "js"
+        if js_dir.is_dir():
+            app.mount("/js", StaticFiles(directory=str(js_dir)), name="js")
+
+        assets_dir = ui_dir / "assets"
+        if assets_dir.is_dir():
+            app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
         app.mount("/ui", StaticFiles(directory=str(ui_dir), html=True), name="ui")
 
         @app.get("/", include_in_schema=False)
